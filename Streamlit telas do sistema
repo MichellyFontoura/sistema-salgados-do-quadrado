@@ -1,0 +1,1333 @@
+import base64
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+import mysql.connector
+
+
+
+# ============================================================
+# CONFIGURAÇÃO
+# ============================================================
+st.set_page_config(
+    page_title="Salgados do Quadrado",
+    page_icon="🥟",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+BASE_DIR = Path(__file__).parent
+ASSETS_DIR = BASE_DIR / "assets"
+ASSETS_DIR.mkdir(exist_ok=True)
+MASCOTE_PATH = ASSETS_DIR / "mascote.png"
+
+# Garante tema claro mesmo se o sistema do usuário estiver no modo escuro.
+# Sem isso o Streamlit deixa as legendas brancas e ilegíveis sobre os cartões.
+CONFIG_PATH = BASE_DIR / ".streamlit" / "config.toml"
+if not CONFIG_PATH.exists():
+    CONFIG_PATH.parent.mkdir(exist_ok=True)
+    CONFIG_PATH.write_text(
+        "[theme]\n"
+        'base = "light"\n'
+        'primaryColor = "#f4a300"\n'
+        'backgroundColor = "#fffdf8"\n'
+        'secondaryBackgroundColor = "#fff4e2"\n'
+        'textColor = "#2b1a12"\n',
+        encoding="utf-8",
+    )
+
+FLAVORS = [
+    "Bolinha de Queijo",
+    "Coxinha",
+    "Empada de Alho-Poró",
+    "Empada de Frango",
+    "Enroladinho de Salsicha",
+    "Kibe",
+    "Mini Churros",
+    "Risole de Milho",
+    "Travesseirinho de Calabresa com Queijo",
+]
+
+BEVERAGES = ["Água Mineral", "Coca-Cola", "Guaraná", "Suco"]
+
+REORDER_SALGADO = 300
+REORDER_BEBIDA = 6
+
+PRECOS_PADRAO = {
+    **{f: 0.58 for f in FLAVORS},
+    "Mini Churros": 0.58,
+    "Travesseirinho de Calabresa com Queijo": 0.58,
+    "Água Mineral": 3.00,
+    "Coca-Cola": 4.00,
+    "Guaraná": 4.00,
+    "Suco": 3.50,
+}
+
+PRODUCTS = {
+    **{f: {"tipo": "Salgado", "inicial": 500, "minimo": REORDER_SALGADO} for f in FLAVORS},
+    **{b: {"tipo": "Bebida", "inicial": 24, "minimo": REORDER_BEBIDA} for b in BEVERAGES},
+}
+
+
+# ============================================================
+# ESTILO
+# ============================================================
+st.markdown(
+    """
+<style>
+:root{
+  --ink:#2b1a12; --amber:#f4a300; --amber-dark:#c97c00;
+  --cream:#fffaf2; --line:#f0e2cf; --danger:#c0392b; --ok:#1f8a5f;
+}
+.stApp{
+  background:
+    radial-gradient(1000px 500px at 8% -10%, #fff3dc 0%, rgba(255,243,220,0) 60%),
+    radial-gradient(900px 500px at 100% 0%, #ffe9c9 0%, rgba(255,233,201,0) 55%),
+    #fffdf8;
+}
+section.main > div{padding-top:1rem;}
+h1,h2,h3,h4{font-family:"Trebuchet MS",Verdana,sans-serif;color:var(--ink);letter-spacing:-.4px;}
+
+/* HERO */
+.hero{
+  display:flex;align-items:center;gap:22px;
+  background:linear-gradient(120deg,#ffb43d 0%,#f48b00 55%,#e07100 100%);
+  border-radius:26px;padding:22px 28px;color:#fff;
+  box-shadow:0 18px 40px -18px rgba(224,113,0,.75);
+  margin-bottom:18px;
+}
+.hero img{width:96px;height:96px;border-radius:22px;object-fit:cover;
+  background:#fff;padding:6px;box-shadow:0 8px 20px rgba(0,0,0,.18);}
+.hero .badge{width:96px;height:96px;border-radius:22px;background:rgba(255,255,255,.18);
+  display:flex;align-items:center;justify-content:center;font-size:46px;}
+.hero h1{color:#fff;margin:0;font-size:2.05rem;}
+.hero p{margin:.25rem 0 0;opacity:.95;font-size:.98rem;}
+
+/* KPI */
+.kpi{
+  background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px 18px;
+  box-shadow:0 10px 24px -20px rgba(43,26,18,.5);height:100%;
+}
+.kpi .lab{font-size:.74rem;text-transform:uppercase;letter-spacing:.09em;color:#a08b74;}
+.kpi .val{font-size:1.95rem;font-weight:800;color:var(--ink);line-height:1.1;}
+.kpi .sub{font-size:.78rem;color:#a08b74;}
+.kpi.alerta{border-color:#f3c6bf;background:#fff6f4;}
+.kpi.alerta .val{color:var(--danger);}
+.kpi.destaque{background:linear-gradient(135deg,#fff6e2,#ffeccb);border-color:#f6dcae;}
+.kpi.destaque .val{color:#a35d00;font-size:1.75rem;}
+
+/* CARD */
+.card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:20px 22px;
+  box-shadow:0 12px 30px -24px rgba(43,26,18,.55);margin-bottom:14px;}
+.card h4{margin:0 0 .6rem;font-size:1.02rem;}
+div[data-testid="stVerticalBlockBorderWrapper"]{
+  background:#fff;border:1px solid var(--line)!important;border-radius:22px;
+  padding:6px 20px 14px;box-shadow:0 12px 30px -24px rgba(43,26,18,.55);}
+.sec{font-family:"Trebuchet MS",Verdana,sans-serif;font-weight:800;color:var(--ink);
+  font-size:1.02rem;margin:.4rem 0 .2rem;}
+
+/* chips */
+.chip{display:inline-block;background:#fff2d8;color:#8a5a00;border:1px solid #f6dcae;
+  border-radius:999px;padding:4px 12px;font-size:.8rem;margin:0 6px 6px 0;font-weight:600;}
+.chip.red{background:#fdeceb;border-color:#f5c9c4;color:#a5281a;}
+
+/* widgets */
+.stTabs [data-baseweb="tab-list"], .stTabs [role="tablist"]{
+  gap:8px!important;border-bottom:none!important;}
+.stTabs [data-baseweb="tab"], .stTabs [data-testid="stTab"]{
+  background:#fff;border:1px solid var(--line)!important;border-radius:16px 16px 0 0;
+  padding:11px 26px!important;font-weight:700;color:#8a6d52;
+  min-width:max-content!important;white-space:nowrap!important;overflow:visible!important;}
+.stTabs [aria-selected="true"]{
+  background:var(--amber)!important;color:#fff!important;border-color:var(--amber)!important;}
+.stTabs [aria-selected="true"] p{color:#fff!important;}
+div.stButton>button, div.stDownloadButton>button{
+  border-radius:14px;font-weight:700;border:none;
+  background:linear-gradient(120deg,#ffb43d,#e98a00);color:#fff;padding:.55rem 1.1rem;
+  box-shadow:0 10px 22px -14px rgba(233,138,0,.9);}
+div.stButton>button:hover, div.stDownloadButton>button:hover{filter:brightness(1.06);}
+div[data-testid="stForm"]{border:1px solid var(--line);border-radius:22px;background:#fff;padding:18px 20px;}
+div[data-testid="stExpander"]{border:1px solid var(--line);border-radius:18px;background:#fff;}
+
+/* nome do produto sempre visível, quebrando linha se precisar */
+.prod{display:flex;flex-direction:column;margin:.55rem 0 .15rem;min-height:2.9rem;}
+.prod-nome{font-weight:700;color:var(--ink);font-size:.9rem;line-height:1.2;
+  white-space:normal;overflow-wrap:break-word;}
+.prod-info{font-size:.76rem;color:#a08b74;margin-top:2px;}
+
+/* impede que Streamlit corte rótulos e nomes de abas com "..." */
+label[data-testid="stWidgetLabel"] p,
+div[data-testid="stMarkdownContainer"] p{
+  white-space:normal!important;overflow:visible!important;text-overflow:clip!important;}
+.stTabs [data-baseweb="tab"] p, .stTabs [data-testid="stTab"] p{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  font-size:.95rem!important;font-weight:700!important;margin:0!important;}
+.stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"],
+.stTabs [data-testid="stTabHighlight"]{display:none!important;}
+
+
+/* CORES FIXAS — evita texto branco quando o sistema está no modo escuro */
+.stApp, .stApp p, .stApp li, .stApp span, .stApp label{color:var(--ink);}
+label[data-testid="stWidgetLabel"] p, div[data-testid="stWidgetLabel"] p,
+div[data-testid="stCaptionContainer"] p, .stRadio label p, .stCheckbox label p{
+  color:#6b5136!important;font-weight:600;}
+div[data-testid="stExpander"] summary, div[data-testid="stExpander"] summary p,
+details summary, details summary p, details summary svg{
+  color:var(--ink)!important;fill:var(--ink)!important;font-weight:700;}
+input, textarea, div[data-baseweb="select"] div, div[data-baseweb="input"] input{
+  color:var(--ink)!important;}
+div[data-baseweb="input"], div[data-baseweb="select"]>div, div[data-baseweb="base-input"]{
+  background:#fdf7ee!important;}
+div[data-testid="stNumberInputContainer"]{background:#fdf7ee!important;}
+section[data-testid="stSidebar"] *{color:var(--ink)!important;}
+
+#MainMenu,footer{visibility:hidden;}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# PERSISTÊNCIA — MySQL
+# ============================================================
+def para_int(valor) -> int:
+    """Converte valores numéricos para inteiro com segurança."""
+    try:
+        return int(float(str(valor).replace(",", ".").strip()))
+    except (TypeError, ValueError):
+        return 0
+
+
+def para_float(valor) -> float:
+    """Converte valores numéricos para float com segurança."""
+    try:
+        return float(str(valor).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+def estado_inicial():
+    return {
+        "stock": {nome: p["inicial"] for nome, p in PRODUCTS.items()},
+        "customers": {},
+        "orders": [],
+        "prices": dict(PRECOS_PADRAO),
+    }
+
+
+def conectar_mysql():
+    """
+    Abre uma conexão com o banco.
+    As credenciais ficam em .streamlit/secrets.toml.
+    """
+    try:
+        cfg = st.secrets["mysql"]
+        return mysql.connector.connect(
+            host=cfg.get("host", "localhost"),
+            port=int(cfg.get("port", 3306)),
+            user=cfg.get("user", "root"),
+            password=cfg.get("password", ""),
+            database=cfg.get("database", "salgados_do_quadrado"),
+            charset="utf8mb4",
+            autocommit=False,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Não foi possível conectar ao MySQL. "
+            f"Detalhe técnico: {exc}"
+        ) from exc
+
+
+def _data_br_para_date(valor):
+    if not valor:
+        return datetime.now().date()
+    if hasattr(valor, "year") and not isinstance(valor, str):
+        return valor
+    return datetime.strptime(str(valor), "%d/%m/%Y").date()
+
+
+def _registro_para_datetime(valor):
+    if not valor:
+        return datetime.now()
+    if isinstance(valor, datetime):
+        return valor
+    return datetime.strptime(str(valor), "%d/%m/%Y %H:%M")
+
+
+def _retirada_para_data_hora(valor):
+    texto = str(valor or "").strip()
+    if " às " in texto:
+        d, h = texto.split(" às ", 1)
+        return (
+            datetime.strptime(d, "%d/%m/%Y").date(),
+            datetime.strptime(h, "%H:%M").time(),
+        )
+    agora = datetime.now()
+    return agora.date(), agora.time().replace(second=0, microsecond=0)
+
+
+import re
+
+
+def _itens_do_texto(texto):
+    """
+    Converte '25x Coxinha, 25x Kibe' em [('Coxinha', 25), ('Kibe', 25)].
+    """
+    encontrados = re.findall(r"(\d+)x\s+(.+?)(?=,\s+\d+x\s+|$)", str(texto or ""))
+    return [(nome.strip(), int(qtd)) for qtd, nome in encontrados]
+
+
+def carregar():
+    """Carrega produtos, clientes, pedidos e itens diretamente do MySQL."""
+    base = estado_inicial()
+    con = conectar_mysql()
+    cur = con.cursor(dictionary=True)
+
+    try:
+        cur.execute(
+            "SELECT id, nome, tipo, preco, estoque, estoque_minimo "
+            "FROM produtos WHERE ativo = 1 ORDER BY id"
+        )
+        produtos_db = cur.fetchall()
+        for p in produtos_db:
+            nome = p["nome"]
+            if nome in base["stock"]:
+                base["stock"][nome] = int(p["estoque"])
+                base["prices"][nome] = float(p["preco"])
+
+        # A quantidade de pedidos é calculada diretamente da tabela `pedidos`.
+        # Assim o sistema não depende de `clientes.total_pedidos` estar atualizado.
+        cur.execute(
+            """
+            SELECT
+                c.id, c.telefone_chave, c.telefone, c.nome, c.empresa,
+                c.cnpj, c.sexo, c.endereco, c.total_pedidos, c.cadastrado_em,
+                COALESCE(COUNT(p.id), 0) AS pedidos_reais
+            FROM clientes c
+            LEFT JOIN pedidos p ON p.cliente_id = c.id
+            GROUP BY
+                c.id, c.telefone_chave, c.telefone, c.nome, c.empresa,
+                c.cnpj, c.sexo, c.endereco, c.total_pedidos, c.cadastrado_em
+            ORDER BY c.id
+            """
+        )
+        for c in cur.fetchall():
+            chave = c["telefone_chave"]
+            base["customers"][chave] = {
+                "_db_id": int(c["id"]),
+                "nome": c["nome"],
+                "telefone": c["telefone"],
+                "empresa": bool(c["empresa"]),
+                "cnpj": c["cnpj"] or "",
+                "sexo": c["sexo"],
+                "endereco": c["endereco"] or "N/A",
+                # Usa a contagem real existente em `pedidos`.
+                "pedidos": int(c["pedidos_reais"] or 0),
+                "cadastrado_em": c["cadastrado_em"].strftime("%d/%m/%Y"),
+            }
+
+        cur.execute(
+            """
+            SELECT
+                p.id, p.canal, p.codigo_ifood, p.nome_cliente, p.telefone,
+                p.data_retirada, p.hora_retirada, p.endereco,
+                p.forma_pagamento, p.total_itens, p.valor_total,
+                p.observacoes, p.registrado_em
+            FROM pedidos p
+            ORDER BY p.registrado_em, p.id
+            """
+        )
+        pedidos_db = cur.fetchall()
+
+        if pedidos_db:
+            ids = [str(int(p["id"])) for p in pedidos_db]
+            placeholders = ",".join(["%s"] * len(ids))
+            cur.execute(
+                f"""
+                SELECT pi.pedido_id, pr.nome, pi.quantidade
+                FROM pedido_itens pi
+                JOIN produtos pr ON pr.id = pi.produto_id
+                WHERE pi.pedido_id IN ({placeholders})
+                ORDER BY pi.id
+                """,
+                ids,
+            )
+            itens_por_pedido = {}
+            for item in cur.fetchall():
+                itens_por_pedido.setdefault(int(item["pedido_id"]), []).append(
+                    (item["nome"], int(item["quantidade"]))
+                )
+        else:
+            itens_por_pedido = {}
+
+        for p in pedidos_db:
+            pid = int(p["id"])
+            itens = itens_por_pedido.get(pid, [])
+            canal_app = "WhatsApp / Direto" if p["canal"] == "WhatsApp/Direto" else "iFood"
+            base["orders"].append(
+                {
+                    "_db_id": pid,
+                    "Registro": p["registrado_em"].strftime("%d/%m/%Y %H:%M"),
+                    "Canal": canal_app,
+                    "Cliente": p["nome_cliente"],
+                    "Telefone": p["telefone"] or "",
+                    "Código iFood": p["codigo_ifood"] or "",
+                    "Retirada": (
+                        f"{p['data_retirada'].strftime('%d/%m/%Y')} "
+                        f"às {str(p['hora_retirada'])[:5]}"
+                    ),
+                    "Endereço": p["endereco"],
+                    "Total Itens": int(p["total_itens"] or 0),
+                    "Valor": float(p["valor_total"] or 0),
+                    "Itens": ", ".join(f"{q}x {n}" for n, q in itens),
+                    "Pagamento": p["forma_pagamento"],
+                    "Obs": p["observacoes"] or "",
+                }
+            )
+        return base
+    finally:
+        cur.close()
+        con.close()
+
+
+def salvar():
+    """
+    Sincroniza o estado atual da tela com o MySQL.
+    Produtos/clientes são atualizados; apenas pedidos ainda sem _db_id são inseridos.
+    """
+    con = conectar_mysql()
+    cur = con.cursor(dictionary=True)
+
+    try:
+        # 1) Estoque e preços
+        for nome in PRODUCTS:
+            cur.execute(
+                "UPDATE produtos SET estoque=%s, preco=%s WHERE nome=%s",
+                (
+                    int(st.session_state.stock.get(nome, 0)),
+                    float(st.session_state.prices.get(nome, 0)),
+                    nome,
+                ),
+            )
+
+        # 2) Clientes
+        for tel_key, cliente in st.session_state.customers.items():
+            cadastrado_em = _data_br_para_date(cliente.get("cadastrado_em"))
+            db_id = cliente.get("_db_id")
+
+            valores = (
+                tel_key,
+                cliente.get("telefone", ""),
+                cliente.get("nome", ""),
+                1 if cliente.get("empresa") else 0,
+                cliente.get("cnpj") or None,
+                cliente.get("sexo", "Não informado"),
+                cliente.get("endereco") or "N/A",
+                int(cliente.get("pedidos", 0)),
+                cadastrado_em,
+            )
+
+            if db_id:
+                cur.execute(
+                    """
+                    UPDATE clientes
+                    SET telefone_chave=%s, telefone=%s, nome=%s, empresa=%s,
+                        cnpj=%s, sexo=%s, endereco=%s, total_pedidos=%s,
+                        cadastrado_em=%s
+                    WHERE id=%s
+                    """,
+                    valores + (int(db_id),),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO clientes
+                    (telefone_chave, telefone, nome, empresa, cnpj, sexo,
+                     endereco, total_pedidos, cadastrado_em)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE
+                        telefone=VALUES(telefone),
+                        nome=VALUES(nome),
+                        empresa=VALUES(empresa),
+                        cnpj=VALUES(cnpj),
+                        sexo=VALUES(sexo),
+                        endereco=VALUES(endereco),
+                        total_pedidos=VALUES(total_pedidos)
+                    """,
+                    valores,
+                )
+                cur.execute(
+                    "SELECT id FROM clientes WHERE telefone_chave=%s",
+                    (tel_key,),
+                )
+                achado = cur.fetchone()
+                if achado:
+                    cliente["_db_id"] = int(achado["id"])
+
+        # 3) Novos pedidos
+        for pedido in st.session_state.orders:
+            if pedido.get("_db_id"):
+                continue
+
+            canal_app = pedido.get("Canal", "")
+            canal_db = "WhatsApp/Direto" if canal_app == "WhatsApp / Direto" else "iFood"
+
+            cliente_id = None
+            if canal_db == "WhatsApp/Direto":
+                chave = "".join(filter(str.isdigit, pedido.get("Telefone", "") or ""))
+                cliente = st.session_state.customers.get(chave)
+                if cliente:
+                    cliente_id = cliente.get("_db_id")
+
+            data_ret, hora_ret = _retirada_para_data_hora(pedido.get("Retirada"))
+            endereco = pedido.get("Endereço") or "Retirada no local"
+            entrega = 0 if endereco == "Retirada no local" else 1
+            codigo_ifood = (pedido.get("Código iFood") or "").strip() or None
+
+            cur.execute(
+                """
+                INSERT INTO pedidos
+                (cliente_id, canal, codigo_ifood, nome_cliente, telefone,
+                 data_retirada, hora_retirada, entrega, endereco,
+                 forma_pagamento, total_itens, valor_total, observacoes,
+                 registrado_em)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    cliente_id,
+                    canal_db,
+                    codigo_ifood,
+                    pedido.get("Cliente") or "",
+                    (pedido.get("Telefone") or None),
+                    data_ret,
+                    hora_ret,
+                    entrega,
+                    endereco,
+                    pedido.get("Pagamento") or "Pix",
+                    int(pedido.get("Total Itens", 0)),
+                    float(pedido.get("Valor", 0)),
+                    (pedido.get("Obs") or None),
+                    _registro_para_datetime(pedido.get("Registro")),
+                ),
+            )
+            pedido_id = int(cur.lastrowid)
+
+            for nome_produto, qtd in _itens_do_texto(pedido.get("Itens")):
+                cur.execute(
+                    "SELECT id, preco FROM produtos WHERE nome=%s",
+                    (nome_produto,),
+                )
+                prod = cur.fetchone()
+                if not prod:
+                    raise RuntimeError(f"Produto não encontrado no MySQL: {nome_produto}")
+
+                cur.execute(
+                    """
+                    INSERT INTO pedido_itens
+                    (pedido_id, produto_id, quantidade, preco_unitario)
+                    VALUES (%s,%s,%s,%s)
+                    """,
+                    (
+                        pedido_id,
+                        int(prod["id"]),
+                        int(qtd),
+                        float(st.session_state.prices.get(nome_produto, prod["preco"])),
+                    ),
+                )
+
+            pedido["_db_id"] = pedido_id
+
+            # Mantém `clientes.total_pedidos` sincronizado sem depender de
+            # UPDATE em massa. O WHERE usa a chave primária (`id`), portanto
+            # também é seguro no MySQL Workbench com Safe Updates ativado.
+            if cliente_id is not None:
+                cur.execute(
+                    "SELECT COUNT(*) AS qtd FROM pedidos WHERE cliente_id=%s",
+                    (int(cliente_id),),
+                )
+                qtd_real = int(cur.fetchone()["qtd"] or 0)
+                cur.execute(
+                    "UPDATE clientes SET total_pedidos=%s WHERE id=%s",
+                    (qtd_real, int(cliente_id)),
+                )
+
+                chave = "".join(filter(str.isdigit, pedido.get("Telefone", "") or ""))
+                cliente_sessao = st.session_state.customers.get(chave)
+                if cliente_sessao is not None:
+                    cliente_sessao["pedidos"] = qtd_real
+
+        con.commit()
+
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        cur.close()
+        con.close()
+
+
+if "carregado" not in st.session_state:
+    try:
+        dados = carregar()
+    except Exception as exc:
+        st.error(f"Erro ao conectar/carregar o MySQL: {exc}")
+        st.info(
+            "Verifique se o MySQL está iniciado, se o banco salgados_do_quadrado "
+            "foi criado e se o arquivo .streamlit/secrets.toml está correto."
+        )
+        st.stop()
+
+    st.session_state.stock = dados["stock"]
+    st.session_state.customers = dados["customers"]
+    st.session_state.orders = dados["orders"]
+    st.session_state.prices = dados["prices"]
+    st.session_state.carregado = True
+
+
+def normalize_phone(phone: str) -> str:
+    return "".join(filter(str.isdigit, phone or ""))
+
+
+def mask_phone(raw: str) -> str:
+    """Formata como (DD) 9XXXX-XXXX (celular) ou (DD) XXXX-XXXX (fixo), conforme digita."""
+    d = normalize_phone(raw)[:11]
+    if len(d) > 10:
+        return f"({d[:2]}) {d[2:7]}-{d[7:]}"
+    if len(d) > 6:
+        return f"({d[:2]}) {d[2:6]}-{d[6:]}"
+    if len(d) > 2:
+        return f"({d[:2]}) {d[2:]}"
+    if d:
+        return f"({d}"
+    return ""
+
+
+def normalize_cnpj(cnpj: str) -> str:
+    return "".join(filter(str.isdigit, cnpj or ""))
+
+
+def mask_cnpj(raw: str) -> str:
+    """Formata como XX.XXX.XXX/XXXX-XX, conforme digita."""
+    d = normalize_cnpj(raw)[:14]
+    if len(d) > 12:
+        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+    if len(d) > 8:
+        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:]}"
+    if len(d) > 5:
+        return f"{d[:2]}.{d[2:5]}.{d[5:]}"
+    if len(d) > 2:
+        return f"{d[:2]}.{d[2:]}"
+    return d
+
+
+def _aplicar_mascara_telefone(key: str):
+    st.session_state[key] = mask_phone(st.session_state[key])
+
+
+def _aplicar_mascara_cnpj(key: str):
+    st.session_state[key] = mask_cnpj(st.session_state[key])
+
+
+def brl(valor: float) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def preco(nome: str) -> float:
+    return float(st.session_state.prices.get(nome, PRECOS_PADRAO.get(nome, 0.0)))
+
+
+def valor_pedido(pedido: dict) -> float:
+    return float(pedido.get("Valor", 0) or 0)
+
+
+def faturamento_por_dia() -> pd.DataFrame:
+    """Agrupa o valor dos pedidos pela data de registro (dd/mm/aaaa)."""
+    if not st.session_state.orders:
+        return pd.DataFrame(columns=["Dia", "Faturamento", "Pedidos", "Itens"])
+
+    linhas = []
+    for o in st.session_state.orders:
+        dia = str(o.get("Registro", ""))[:10]
+        linhas.append(
+            {
+                "Dia": dia,
+                "Faturamento": valor_pedido(o),
+                "Pedidos": 1,
+                "Itens": o.get("Total Itens", 0),
+            }
+        )
+    df = pd.DataFrame(linhas)
+    df = df.groupby("Dia", as_index=False).sum()
+    df["ordem"] = pd.to_datetime(df["Dia"], format="%d/%m/%Y", errors="coerce")
+    return df.sort_values("ordem").drop(columns="ordem")
+
+
+def baixo_estoque():
+    return [
+        n for n, q in st.session_state.stock.items() if para_int(q) <= PRODUCTS[n]["minimo"]
+    ]
+
+
+# ============================================================
+# HERO
+# ============================================================
+if MASCOTE_PATH.exists():
+    b64 = base64.b64encode(MASCOTE_PATH.read_bytes()).decode()
+    figura = f'<img src="data:image/png;base64,{b64}" alt="mascote">'
+else:
+    figura = '<div class="badge">🥟</div>'
+
+st.markdown(
+    f"""
+<div class="hero">
+  {figura}
+  <div>
+    <h1>Salgados do Quadrado</h1>
+    <p>Controle de pedidos, clientes e estoque do freezer — WhatsApp e iFood em um só painel.</p>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+with st.sidebar:
+    st.markdown("### Mascote")
+    up = st.file_uploader("Foto do mascote (PNG/JPG)", type=["png", "jpg", "jpeg"])
+    if up is not None:
+        MASCOTE_PATH.write_bytes(up.getvalue())
+        st.success("Mascote atualizado.")
+        st.rerun()
+    if MASCOTE_PATH.exists():
+        st.image(str(MASCOTE_PATH), use_container_width=True)
+
+    st.divider()
+    st.markdown("### Dados")
+    st.caption("Dados salvos no MySQL — banco `salgados_do_quadrado`.")
+    if st.session_state.orders:
+        st.download_button(
+            "Exportar pedidos (CSV)",
+            pd.DataFrame(st.session_state.orders).to_csv(index=False).encode("utf-8-sig"),
+            file_name="pedidos-salgados-do-quadrado.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with st.expander("Zona de risco"):
+        if st.button("Reiniciar todos os dados", use_container_width=True):
+            base = estado_inicial()
+            st.session_state.stock = base["stock"]
+            st.session_state.customers = base["customers"]
+            st.session_state.orders = base["orders"]
+            st.session_state.prices = base["prices"]
+            salvar()
+            st.rerun()
+
+# ============================================================
+# KPIs
+# ============================================================
+total_salgados = sum(
+    para_int(q) for n, q in st.session_state.stock.items() if PRODUCTS[n]["tipo"] == "Salgado"
+)
+total_vendido = sum(o["Total Itens"] for o in st.session_state.orders)
+alertas = baixo_estoque()
+
+fat_df = faturamento_por_dia()
+hoje_str = datetime.now().strftime("%d/%m/%Y")
+fat_hoje = float(fat_df.loc[fat_df["Dia"] == hoje_str, "Faturamento"].sum()) if not fat_df.empty else 0.0
+fat_total = float(fat_df["Faturamento"].sum()) if not fat_df.empty else 0.0
+pedidos_hoje = int(fat_df.loc[fat_df["Dia"] == hoje_str, "Pedidos"].sum()) if not fat_df.empty else 0
+ticket_hoje = fat_hoje / pedidos_hoje if pedidos_hoje else 0.0
+
+k1, k2, k3, k4, k5 = st.columns(5)
+for col, lab, val, sub, cls in [
+    (k1, "Faturamento hoje", brl(fat_hoje), f"{pedidos_hoje} pedido(s) · ticket {brl(ticket_hoje)}", "destaque"),
+    (k2, "Faturamento total", brl(fat_total), f"{len(st.session_state.orders)} pedidos", ""),
+    (k3, "Itens vendidos", f"{total_vendido:,}".replace(",", "."), "salgados + bebidas", ""),
+    (k4, "Freezer", f"{total_salgados:,}".replace(",", "."), "salgados em estoque", ""),
+    (k5, "Alertas", f"{len(alertas)}", "produtos p/ repor", "alerta" if alertas else ""),
+]:
+    col.markdown(
+        f'<div class="kpi {cls}"><div class="lab">{lab}</div>'
+        f'<div class="val">{val}</div><div class="sub">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+st.write("")
+if alertas:
+    chips = "".join(
+        f'<span class="chip red">{n} · {para_int(st.session_state.stock[n])} un.</span>'
+        for n in alertas
+    )
+    st.markdown(
+        f'<div class="card" style="border-color:#f3c6bf;background:#fff6f4">'
+        f"<h4>Produção urgente</h4>{chips}</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        '<div class="card" style="border-color:#c9e9d8;background:#f4fbf7">'
+        "<h4>Estoque em nível seguro</h4>"
+        '<span class="chip">Todos os produtos acima do ponto de reposição</span></div>',
+        unsafe_allow_html=True,
+    )
+
+tab_pedido, tab_fat, tab_estoque, tab_clientes = st.tabs(
+    ["Novo Pedido", "Faturamento", "Estoque e Produção", "Clientes e Histórico"]
+)
+
+# ============================================================
+# ABA 1 — NOVO PEDIDO
+# ============================================================
+with tab_pedido:
+    esq, dir_ = st.columns([1.05, 1])
+
+    # ---------- dados do cliente (fora de form -> aviso automático) ----------
+    with esq, st.container(border=True):
+        st.markdown('<div class="sec">Quem está comprando</div>', unsafe_allow_html=True)
+        canal = st.radio("Canal de venda", ["WhatsApp / Direto", "iFood"], horizontal=True)
+
+        cliente_existente = None
+        ifood_code = ""
+        nome = ""
+        telefone = ""
+        sexo = "Não informado"
+        empresa = False
+        cnpj = ""
+
+        if canal == "WhatsApp / Direto":
+            telefone = st.text_input(
+                "Telefone (WhatsApp) *",
+                placeholder="(61) 99999-0000",
+                key="telefone_pedido",
+                on_change=_aplicar_mascara_telefone,
+                args=("telefone_pedido",),
+            )
+            tel_key = normalize_phone(telefone)
+
+            # >>> AVISO AUTOMÁTICO DE CLIENTE JÁ CADASTRADO <<<
+            if len(tel_key) >= 10:
+                cliente_existente = st.session_state.customers.get(tel_key)
+                if cliente_existente:
+                    st.error(
+                        f"⚠️ Usuário já cadastrado: **{cliente_existente['nome']}** "
+                        f"({cliente_existente['telefone']}) · "
+                        f"{cliente_existente.get('pedidos', 0)} pedido(s) anteriores. "
+                        "O pedido será vinculado a esse cliente."
+                    )
+                else:
+                    st.success("✅ Telefone novo — será criado um cadastro.")
+            elif tel_key:
+                st.caption("Digite o telefone completo com DDD.")
+
+            nome = st.text_input(
+                "Nome do cliente ou empresa *",
+                value=cliente_existente["nome"] if cliente_existente else "",
+            )
+
+            empresa = st.checkbox(
+                "Empresa",
+                value=bool(cliente_existente.get("empresa", False)) if cliente_existente else False,
+            )
+
+            if empresa:
+                cnpj_key = f"cnpj_pedido_{tel_key}"
+                if cnpj_key not in st.session_state:
+                    st.session_state[cnpj_key] = mask_cnpj(
+                        cliente_existente.get("cnpj", "") if cliente_existente else ""
+                    )
+                cnpj = st.text_input(
+                    "CNPJ (opcional)",
+                    placeholder="00.000.000/0000-00",
+                    key=cnpj_key,
+                    on_change=_aplicar_mascara_cnpj,
+                    args=(cnpj_key,),
+                )
+            else:
+                opcoes_sexo = ["Não informado", "Feminino", "Masculino"]
+                sexo = st.selectbox(
+                    "Sexo",
+                    opcoes_sexo,
+                    index=opcoes_sexo.index(cliente_existente["sexo"])
+                    if cliente_existente and cliente_existente.get("sexo") in opcoes_sexo
+                    else 0,
+                )
+        else:
+            ifood_code = st.text_input("Código do pedido iFood *", placeholder="A1B2C3")
+            nome = f"iFood #{ifood_code}" if ifood_code else ""
+            if ifood_code and any(
+                o.get("Código iFood") == ifood_code for o in st.session_state.orders
+            ):
+                st.error("⚠️ Esse código de pedido iFood já foi registrado.")
+            st.caption("O iFood não libera o telefone, então o cliente não entra na base.")
+
+    # ---------- entrega ----------
+    with dir_, st.container(border=True):
+        st.markdown('<div class="sec">Entrega e pagamento</div>', unsafe_allow_html=True)
+        d1, d2 = st.columns(2)
+        data_retirada = d1.date_input(
+            "Data", value=datetime.today(), format="DD/MM/YYYY"
+        )
+        hora_retirada = d2.time_input("Hora")
+        entrega = st.checkbox("É entrega em endereço?")
+        endereco = st.text_input("Endereço de entrega *") if entrega else "Retirada no local"
+        pagamento = st.selectbox(
+            "Forma de pagamento", ["Pix", "Dinheiro", "Cartão", "iFood (Pago)"]
+        )
+        obs = st.text_input("Observações", placeholder="Ex.: sem cebola, embalar separado…")
+
+    st.write("")
+
+    # ---------- itens (vários sabores!) ----------
+    itens = {}
+    ver = st.session_state.get("form_ver", 0)
+    with st.container(border=True):
+        st.markdown(
+            '<div class="sec">Monte o pedido — escolha quantos sabores quiser</div>',
+            unsafe_allow_html=True,
+        )
+        cols = st.columns(3)
+        for i, sabor in enumerate(FLAVORS):
+            atual = para_int(st.session_state.stock[sabor])
+            alvo = cols[i % 3]
+            alvo.markdown(
+                f'<div class="prod"><span class="prod-nome">{sabor}</span>'
+                f'<span class="prod-info">{brl(preco(sabor))} · {atual} em estoque</span></div>',
+                unsafe_allow_html=True,
+            )
+            q = alvo.number_input(
+                sabor,
+                min_value=0,
+                max_value=max(atual, 0),
+                step=5,
+                key=f"sal_{sabor}_{ver}",
+                label_visibility="collapsed",
+            )
+            if q > 0:
+                itens[sabor] = q
+
+        with st.expander("Adicionar bebidas"):
+            bcols = st.columns(4)
+            for i, beb in enumerate(BEVERAGES):
+                atual = para_int(st.session_state.stock[beb])
+                alvo = bcols[i % 4]
+                alvo.markdown(
+                    f'<div class="prod"><span class="prod-nome">{beb}</span>'
+                    f'<span class="prod-info">{brl(preco(beb))} · {atual} em estoque</span></div>',
+                    unsafe_allow_html=True,
+                )
+                q = alvo.number_input(
+                    beb,
+                    min_value=0,
+                    max_value=max(atual, 0),
+                    step=1,
+                    key=f"beb_{beb}_{ver}",
+                    label_visibility="collapsed",
+                )
+                if q > 0:
+                    itens[beb] = q
+
+    total_pedido = round(sum(q * preco(n) for n, q in itens.items()), 2)
+
+    if itens:
+        resumo = "".join(
+            f'<span class="chip">{q}x {n} · {brl(q * preco(n))}</span>'
+            for n, q in itens.items()
+        )
+        st.markdown(
+            f'<div class="card"><h4>Resumo · {sum(itens.values())} itens · '
+            f'<span style="color:#a35d00">{brl(total_pedido)}</span></h4>{resumo}</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.button("Finalizar pedido e abater estoque", type="primary"):
+        tel_key = normalize_phone(telefone)
+        erros = []
+
+        if canal == "WhatsApp / Direto":
+            if not nome.strip():
+                erros.append("Informe o nome do cliente.")
+            if len(tel_key) < 10:
+                erros.append("Informe um telefone válido com DDD.")
+        else:
+            if not ifood_code.strip():
+                erros.append("Informe o código do pedido iFood.")
+            elif any(o.get("Código iFood") == ifood_code for o in st.session_state.orders):
+                erros.append("Código iFood duplicado — esse pedido já foi registrado.")
+        if entrega and not str(endereco).strip():
+            erros.append("Informe o endereço de entrega.")
+        if not itens:
+            erros.append("Escolha a quantidade de pelo menos um produto.")
+        for n, q in itens.items():
+            if para_int(st.session_state.stock[n]) < para_int(q):
+                erros.append(f"Estoque insuficiente de {n} (disp. {st.session_state.stock[n]}).")
+
+        if erros:
+            for e in erros:
+                st.error(e)
+        else:
+            for n, q in itens.items():
+                st.session_state.stock[n] = para_int(st.session_state.stock[n]) - para_int(q)
+
+            novo_cadastro = True
+            if canal == "WhatsApp / Direto":
+                novo_cadastro = tel_key not in st.session_state.customers
+                antigo = st.session_state.customers.get(tel_key, {})
+                st.session_state.customers[tel_key] = {
+                    "nome": nome.strip(),
+                    "telefone": telefone.strip(),
+                    "empresa": empresa,
+                    "cnpj": cnpj.strip() if empresa else "",
+                    "sexo": sexo if not empresa else "N/A",
+                    "endereco": endereco if entrega else antigo.get("endereco", "N/A"),
+                    "pedidos": antigo.get("pedidos", 0) + 1,
+                    "cadastrado_em": antigo.get(
+                        "cadastrado_em", datetime.now().strftime("%d/%m/%Y")
+                    ),
+                }
+
+            st.session_state.orders.append(
+                {
+                    "Registro": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "Canal": canal,
+                    "Cliente": nome.strip(),
+                    "Telefone": telefone.strip(),
+                    "Código iFood": ifood_code.strip(),
+                    "Retirada": f"{data_retirada.strftime('%d/%m/%Y')} às {hora_retirada.strftime('%H:%M')}",
+                    "Endereço": endereco,
+                    "Total Itens": sum(itens.values()),
+                    "Valor": total_pedido,
+                    "Itens": ", ".join(f"{q}x {n}" for n, q in itens.items()),
+                    "Pagamento": pagamento,
+                    "Obs": obs,
+                }
+            )
+            salvar()
+
+            # zera o formulário trocando as chaves dos campos
+            st.session_state.form_ver = ver + 1
+
+            st.balloons()
+            if canal == "WhatsApp / Direto" and not novo_cadastro:
+                st.toast("Cliente já cadastrado — pedido vinculado ao cadastro existente.", icon="ℹ️")
+            st.success(
+                f"Pedido de {sum(itens.values())} itens · {brl(total_pedido)} registrado. "
+                "Estoque atualizado."
+            )
+            st.rerun()
+
+# ============================================================
+# ABA 2 — FATURAMENTO
+# ============================================================
+with tab_fat:
+    with st.container(border=True):
+        st.markdown('<div class="sec">Faturamento por dia</div>', unsafe_allow_html=True)
+
+        if fat_df.empty:
+            st.info("Registre pedidos para ver o faturamento diário.")
+        else:
+            graf = fat_df.set_index("Dia")[["Faturamento"]]
+            st.bar_chart(graf, color="#f4a300", height=300)
+
+            melhor = fat_df.loc[fat_df["Faturamento"].idxmax()]
+            media = fat_df["Faturamento"].mean()
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(
+                f'<div class="kpi"><div class="lab">Média por dia</div>'
+                f'<div class="val">{brl(media)}</div>'
+                f'<div class="sub">{len(fat_df)} dia(s) com venda</div></div>',
+                unsafe_allow_html=True,
+            )
+            c2.markdown(
+                f'<div class="kpi"><div class="lab">Melhor dia</div>'
+                f'<div class="val">{brl(melhor["Faturamento"])}</div>'
+                f'<div class="sub">{melhor["Dia"]}</div></div>',
+                unsafe_allow_html=True,
+            )
+            ticket_geral = fat_total / len(st.session_state.orders) if st.session_state.orders else 0
+            c3.markdown(
+                f'<div class="kpi"><div class="lab">Ticket médio</div>'
+                f'<div class="val">{brl(ticket_geral)}</div>'
+                f'<div class="sub">por pedido</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            st.write("")
+            tabela = fat_df.copy()
+            tabela["Ticket médio"] = tabela["Faturamento"] / tabela["Pedidos"]
+            tabela["Faturamento"] = tabela["Faturamento"].map(brl)
+            tabela["Ticket médio"] = tabela["Ticket médio"].map(brl)
+            st.dataframe(
+                tabela[["Dia", "Pedidos", "Itens", "Faturamento", "Ticket médio"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Exportar faturamento por dia (CSV)",
+                fat_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="faturamento-por-dia.csv",
+                mime="text/csv",
+            )
+
+    st.write("")
+
+    with st.container(border=True):
+        st.markdown('<div class="sec">Faturamento por canal</div>', unsafe_allow_html=True)
+        if st.session_state.orders:
+            can = pd.DataFrame(
+                [
+                    {"Canal": o["Canal"], "Faturamento": valor_pedido(o)}
+                    for o in st.session_state.orders
+                ]
+            ).groupby("Canal", as_index=False).sum()
+            st.bar_chart(can.set_index("Canal"), color="#e98a00", height=240)
+        else:
+            st.info("Sem dados por canal ainda.")
+
+    st.write("")
+
+    with st.container(border=True):
+        st.markdown('<div class="sec">Tabela de preços</div>', unsafe_allow_html=True)
+        st.caption("Edite os valores e clique em salvar. Pedidos antigos mantêm o preço da venda.")
+        precos_df = pd.DataFrame(
+            [
+                {"Produto": n, "Tipo": PRODUCTS[n]["tipo"], "Preço (R$)": preco(n)}
+                for n in PRODUCTS
+            ]
+        )
+        editado = st.data_editor(
+            precos_df,
+            use_container_width=True,
+            hide_index=True,
+            disabled=["Produto", "Tipo"],
+            column_config={
+                "Preço (R$)": st.column_config.NumberColumn(
+                    "Preço (R$)", min_value=0.0, step=0.25, format="%.2f"
+                )
+            },
+            key="editor_precos",
+        )
+        if st.button("Salvar preços"):
+            st.session_state.prices = {
+                r["Produto"]: float(r["Preço (R$)"]) for _, r in editado.iterrows()
+            }
+            salvar()
+            st.success("Preços atualizados.")
+            st.rerun()
+
+# ============================================================
+# ABA 3 — ESTOQUE
+# ============================================================
+with tab_estoque:
+    col_a, col_b = st.columns([1.7, 1])
+
+    with col_a, st.container(border=True):
+        st.markdown('<div class="sec">Freezer e adega</div>', unsafe_allow_html=True)
+        df = pd.DataFrame(
+            [
+                {
+                    "Produto": n,
+                    "Tipo": PRODUCTS[n]["tipo"],
+                    "Quantidade": para_int(q),
+                    "Mínimo": PRODUCTS[n]["minimo"],
+                    "Status": "Repor" if q <= PRODUCTS[n]["minimo"] else "OK",
+                }
+                for n, q in st.session_state.stock.items()
+            ]
+        )
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Produto": st.column_config.TextColumn("Produto", width="medium"),
+                "Tipo": st.column_config.TextColumn("Tipo", width="small"),
+                "Quantidade": st.column_config.ProgressColumn(
+                    "Quantidade",
+                    min_value=0,
+                    max_value=int(max(df["Quantidade"].max(), 1)),
+                    format="%d",
+                )
+            },
+        )
+        st.markdown('<div class="sec">Salgados no freezer</div>', unsafe_allow_html=True)
+        st.bar_chart(
+            pd.DataFrame(
+                {"Estoque": [para_int(st.session_state.stock[f]) for f in FLAVORS]}, index=FLAVORS
+            ),
+            color="#f4a300",
+            height=280,
+        )
+
+    with col_b:
+        with st.container(border=True):
+            st.markdown('<div class="sec">Registrar produção</div>', unsafe_allow_html=True)
+            with st.form("form_producao", clear_on_submit=True):
+                sabor_prod = st.selectbox("Sabor produzido", FLAVORS)
+                add_unidades = st.number_input(
+                    "Quantidade produzida (unidades)", min_value=1, value=100, step=1
+                )
+                if st.form_submit_button("Adicionar ao freezer"):
+                    add = para_int(add_unidades)
+                    anterior = para_int(st.session_state.stock.get(sabor_prod, 0))
+                    st.session_state.stock[sabor_prod] = anterior + add
+                    salvar()
+                    st.success(
+                        f"{sabor_prod}: {anterior} + {add} = "
+                        f"{st.session_state.stock[sabor_prod]} unidades no freezer."
+                    )
+                    st.rerun()
+
+        st.write("")
+
+        with st.container(border=True):
+            st.markdown('<div class="sec">Reposição de bebidas</div>', unsafe_allow_html=True)
+            with st.form("form_bebida", clear_on_submit=True):
+                beb = st.selectbox("Bebida", BEVERAGES)
+                caixas = st.number_input("Unidades", min_value=1, value=12, step=1)
+                if st.form_submit_button("Adicionar bebidas"):
+                    add = para_int(caixas)
+                    anterior = para_int(st.session_state.stock.get(beb, 0))
+                    st.session_state.stock[beb] = anterior + add
+                    salvar()
+                    st.success(
+                        f"{beb}: {anterior} + {add} = {st.session_state.stock[beb]} unidades."
+                    )
+                    st.rerun()
+
+# ============================================================
+# ABA 4 — CLIENTES E HISTÓRICO
+# ============================================================
+with tab_clientes:
+    with st.container(border=True):
+        st.markdown('<div class="sec">Base de clientes (WhatsApp)</div>', unsafe_allow_html=True)
+        if st.session_state.customers:
+            busca = st.text_input("Buscar por nome ou telefone")
+            cdf = pd.DataFrame(st.session_state.customers.values())
+            if busca:
+                b = busca.lower()
+                cdf = cdf[
+                    cdf["nome"].str.lower().str.contains(b) | cdf["telefone"].str.contains(b)
+                ]
+            st.dataframe(cdf, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum cliente cadastrado ainda.")
+
+    st.write("")
+
+    with st.container(border=True):
+        st.markdown('<div class="sec">Editar cadastro de cliente</div>', unsafe_allow_html=True)
+        if st.session_state.customers:
+            st.caption(
+                "Errou um número, o cliente trocou de telefone ou perdeu o antigo? "
+                "Selecione o cadastro e corrija aqui."
+            )
+            chaves = list(st.session_state.customers.keys())
+            rotulos = {
+                k: f"{st.session_state.customers[k]['nome']} · {st.session_state.customers[k]['telefone']}"
+                for k in chaves
+            }
+            chave_sel = st.selectbox(
+                "Cliente",
+                chaves,
+                format_func=lambda k: rotulos.get(k, k),
+                key="edit_cliente_sel",
+            )
+            c_atual = st.session_state.customers[chave_sel]
+
+            # chaves de widget únicas por cliente, para não misturar dados
+            # ao trocar a seleção e para permitir a máscara em tempo real
+            k_nome = f"edit_nome_{chave_sel}"
+            k_tel = f"edit_tel_{chave_sel}"
+            k_emp = f"edit_empresa_{chave_sel}"
+            k_cnpj = f"edit_cnpj_{chave_sel}"
+            k_sexo = f"edit_sexo_{chave_sel}"
+            k_end = f"edit_endereco_{chave_sel}"
+
+            if k_tel not in st.session_state:
+                st.session_state[k_tel] = mask_phone(c_atual.get("telefone", ""))
+            if k_cnpj not in st.session_state:
+                st.session_state[k_cnpj] = mask_cnpj(c_atual.get("cnpj", ""))
+
+            e1, e2 = st.columns(2)
+            novo_nome = e1.text_input("Nome", value=c_atual.get("nome", ""), key=k_nome)
+            novo_telefone = e2.text_input(
+                "Telefone (WhatsApp)",
+                key=k_tel,
+                on_change=_aplicar_mascara_telefone,
+                args=(k_tel,),
+            )
+
+            nova_empresa = st.checkbox("Empresa", value=bool(c_atual.get("empresa", False)), key=k_emp)
+            if nova_empresa:
+                novo_cnpj = st.text_input(
+                    "CNPJ (opcional)",
+                    key=k_cnpj,
+                    on_change=_aplicar_mascara_cnpj,
+                    args=(k_cnpj,),
+                )
+                novo_sexo = c_atual.get("sexo", "N/A")
+            else:
+                novo_cnpj = ""
+                opcoes_sexo_edit = ["Não informado", "Feminino", "Masculino"]
+                novo_sexo = st.selectbox(
+                    "Sexo",
+                    opcoes_sexo_edit,
+                    index=opcoes_sexo_edit.index(c_atual.get("sexo", "Não informado"))
+                    if c_atual.get("sexo") in opcoes_sexo_edit
+                    else 0,
+                    key=k_sexo,
+                )
+            novo_endereco = st.text_input(
+                "Endereço", value=c_atual.get("endereco", "N/A"), key=k_end
+            )
+
+            if st.button("Salvar alterações", type="primary", key=f"salvar_{chave_sel}"):
+                nova_chave = normalize_phone(novo_telefone)
+                if not novo_nome.strip():
+                    st.error("Informe o nome do cliente.")
+                elif len(nova_chave) < 10:
+                    st.error("Informe um telefone válido com DDD.")
+                elif nova_chave != chave_sel and nova_chave in st.session_state.customers:
+                    st.error(
+                        "Já existe outro cliente cadastrado com esse telefone. "
+                        "Não é possível salvar."
+                    )
+                else:
+                    atualizado = dict(c_atual)
+                    atualizado.update(
+                        {
+                            "nome": novo_nome.strip(),
+                            "telefone": novo_telefone.strip(),
+                            "empresa": nova_empresa,
+                            "cnpj": novo_cnpj.strip() if nova_empresa else "",
+                            "sexo": novo_sexo if not nova_empresa else "N/A",
+                            "endereco": novo_endereco,
+                        }
+                    )
+                    if nova_chave != chave_sel:
+                        del st.session_state.customers[chave_sel]
+                        st.session_state.pop("edit_cliente_sel", None)
+                    st.session_state.customers[nova_chave] = atualizado
+                    salvar()
+                    st.success("Cadastro atualizado.")
+                    st.rerun()
+        else:
+            st.info("Cadastre um cliente para poder editá-lo aqui.")
+
+    st.write("")
+
+    with st.container(border=True):
+        st.markdown('<div class="sec">Histórico de pedidos</div>', unsafe_allow_html=True)
+        if st.session_state.orders:
+            odf = pd.DataFrame(st.session_state.orders)[::-1]
+            if "Valor" in odf.columns:
+                odf["Valor"] = odf["Valor"].fillna(0).map(brl)
+            st.dataframe(odf, use_container_width=True, hide_index=True)
+            st.markdown('<div class="sec">Itens por canal</div>', unsafe_allow_html=True)
+            st.bar_chart(odf.groupby("Canal")["Total Itens"].sum(), color="#e98a00", height=240)
+        else:
+            st.info("Nenhum pedido registrado ainda.")
