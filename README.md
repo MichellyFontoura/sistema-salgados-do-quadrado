@@ -42,6 +42,17 @@ Identificação dos produtos mais vendidos.
 Comparação entre vendas diretas e pedidos do iFood.
 
 Controle das entradas e saídas do estoque.
+-------------------------------------------------------------------//---------------------------------------------------------------------------------------
+
+                                                         Aviso sobre os dados
+Os dados apresentados na tabela Cliente são totalmente fictícios e foram gerados artificialmente por meio de inteligência artificial, exclusivamente para fins de demonstração, testes e desenvolvimento do sistema.
+
+As informações referentes aos clientes, produtos, pedidos, quantidades, valores e demais registros não correspondem a pessoas, empresas ou transações reais. Nenhum dado pessoal verdadeiro foi utilizado, armazenado ou processado neste ambiente.
+
+Este material não deve ser interpretado como uma base de dados real nem utilizado para fins comerciais, cadastrais ou de identificação de pessoas. Apesar disso, recomenda-se evitar a inserção de informações pessoais verdadeiras sem a adoção das medidas adequadas de segurança, finalidade, necessidade e conformidade com a Lei Geral de Proteção de Dados Pessoais — LGPD.
+
+Observação: este aviso ajuda a deixar clara a natureza fictícia dos dados, mas não substitui uma análise jurídica ou um programa completo de adequação à LGPD.
+
 
 Alertas para ingredientes ou produtos com quantidade baixa.
 
