@@ -42,7 +42,7 @@ Identificação dos produtos mais vendidos.
 Comparação entre vendas diretas e pedidos do iFood.
 
 Controle das entradas e saídas do estoque.
--------------------------------------------------------------------//---------------------------------------------------------------------------------------
+
 
                                                          Aviso sobre os dados
 Os dados apresentados na tabela Cliente são totalmente fictícios e foram gerados artificialmente por meio de inteligência artificial, exclusivamente para fins de demonstração, testes e desenvolvimento do sistema.
