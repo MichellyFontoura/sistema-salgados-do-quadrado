@@ -1,7 +1,8 @@
 sistema-salgados-do-quadrado
 Sistema de Gestão — Salgados do Quadrado
+                                                  Resumo do projeto — Salgados do Quadrado
 
-Resumo do projeto — Salgados do Quadrado O Salgados do Quadrado é uma loja de salgados fundada em 2021, voltada para a produção e venda de salgados por encomenda. O atendimento é realizado principalmente de forma presencial: os clientes fazem o pedido e retiram os produtos na loja, sem serviço próprio de entrega. A empresa também recebe pedidos pelo iFood, canal em que o próprio aplicativo disponibiliza métricas automáticas de vendas.
+O Salgados do Quadrado é uma loja de salgados fundada em 2021, voltada para a produção e venda de salgados por encomenda. O atendimento é realizado principalmente de forma presencial: os clientes fazem o pedido e retiram os produtos na loja, sem serviço próprio de entrega. A empresa também recebe pedidos pelo iFood, canal em que o próprio aplicativo disponibiliza métricas automáticas de vendas.
 
 O projeto consiste no desenvolvimento de um sistema para auxiliar no controle de pedidos, vendas, faturamento e estoque da loja. Ele foi criado porque, apesar de o iFood registrar automaticamente os dados dos pedidos feitos pela plataforma, as vendas diretas que representam o maior volume de vendas do negócio não possuíam um registro organizado. Isso dificultava saber quanto a loja vendia, quais produtos tinham maior saída e qual era o resultado real do faturamento.
 
